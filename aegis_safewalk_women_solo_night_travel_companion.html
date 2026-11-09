@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Aegis SafeTransit - Bengaluru Women Solo Night Route</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Leaflet CSS & JS for high-detail custom dark map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Tone.js for alarm and ringtone audio generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            night: {
+              950: '#030712',
+              900: '#070b19',
+              800: '#0e152e',
+              700: '#172042',
+              600: '#232f5d'
+            },
+            aura: {
+              magenta: '#ff2a85',
+              rose: '#f43f5e',
+              teal: '#06b6d4',
+              violet: '#8b5cf6',
+              amber: '#f59e0b',
+              emerald: '#10b981'
+            }
+          },
+          animation: {
+            'pulse-rapid': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'ping-slow': 'ping 2.2s cubic-bezier(0, 0, 0.2, 1) infinite',
+            'glow-sos': 'glowSOS 1.4s ease-in-out infinite alternate',
+            'beam': 'beam 2s ease-in-out infinite',
+          },
+          keyframes: {
+            glowSOS: {
+              '0%': { boxShadow: '0 0 15px rgba(255, 42, 133, 0.6), inset 0 0 10px rgba(244, 63, 94, 0.4)' },
+              '100%': { boxShadow: '0 0 32px rgba(255, 42, 133, 0.95), inset 0 0 16px rgba(255, 255, 255, 0.6)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    .leaflet-container {
+      background: #050b14 !important;
+      font-family: inherit;
+    }
+    .leaflet-control-attribution {
+      display: none !important;
+    }
+    /* Custom CSS Filter to transform genuine Google Maps Road Tiles into Google Dark Night Mode without API Key */
+    .google-night-tiles {
+      filter: invert(100%) hue-rotate(185deg) brightness(92%) contrast(95%) saturate(130%);
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .glass-panel {
+      background: rgba(10, 15, 32, 0.78);
+      backdrop-filter: blur(14px);
+    }
+    .route-glow-polyline {
+      filter: drop-shadow(0 0 8px #ff2a85) drop-shadow(0 0 18px #8b5cf6);
+    }
+    @keyframes radarPulse {
+      0% { stroke-opacity: 0.9; stroke-width: 2; }
+      50% { stroke-opacity: 0.4; stroke-width: 4; }
+      100% { stroke-opacity: 0.9; stroke-width: 2; }
+    }
+    .user-safety-circle {
+      animation: radarPulse 2.4s infinite ease-in-out;
+    }
+    .police-active-highlight {
+      box-shadow: 0 0 18px #38bdf8, 0 0 30px #0284c7 !important;
+      transform: scale(1.08);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen w-screen overflow-hidden flex justify-center items-center select-none font-sans antialiased">
+
+  <!-- Mobile Frame Container - Fully responsive 100% width on mobile, rounded card on desktop -->
+  <div class="relative w-full h-full max-w-md md:h-[94vh] md:max-h-[920px] md:rounded-[42px] overflow-hidden shadow-2xl border-0 md:border-[7px] md:border-slate-800 flex flex-col bg-night-950">
+
+    <!-- 1. FULL BACKGROUND: DIRECT GOOGLE MAPS ENGINE (NO API KEY NEEDED) -->
+    <div id="night-map" class="absolute inset-0 z-0"></div>
+
+    <!-- Subtle top/bottom edge protection gradient so UI controls stay high-contrast over any Google Map mode -->
+    <div class="absolute inset-x-0 top-0 h-32 pointer-events-none z-[1] bg-gradient-to-b from-night-950/95 via-night-950/50 to-transparent"></div>
+    <div class="absolute inset-x-0 bottom-0 h-48 pointer-events-none z-[1] bg-gradient-to-t from-night-950/95 via-night-950/50 to-transparent"></div>
+
+    <!-- 2. TOP STATUS BAR (Camera Top-Left, Route Pill Center, SOS Top-Right) -->
+    <header class="relative z-20 pt-3 px-3 pb-2 flex items-center justify-between gap-1.5">
+      
+      <!-- TOP LEFT: Circular Discreet Bodycam / Video Recording Trigger -->
+      <button id="cam-toggle-btn" onclick="toggleCameraRecord()" 
+        class="group relative flex items-center justify-center w-11 h-11 rounded-full glass-panel transition-all duration-300 hover:scale-105 active:scale-95 border border-white/15 hover:border-aura-magenta/60 shadow-lg shrink-0"
+        title="Discreet Cloud Bodycam">
+        <span id="cam-rec-dot" class="hidden absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+        <span id="cam-rec-dot-fixed" class="hidden absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm"></span>
+        <i data-lucide="video" id="cam-icon" class="w-4.5 h-4.5 text-pink-300 transition-colors group-hover:text-pink-100"></i>
+        <span class="absolute -bottom-3.5 text-[7.5px] tracking-wide font-semibold text-pink-200/90 uppercase">Cam</span>
+      </button>
+
+      <!-- TOP CENTER: Live Route Tracking & Safety Corridor Pill -->
+      <div onclick="toggleRouteDetailsModal()" 
+        class="flex-1 max-w-[190px] mx-0.5 py-1 px-2.5 rounded-full glass-panel border border-violet-500/30 flex items-center justify-between shadow-lg cursor-pointer hover:border-violet-400/60 transition truncate">
+        <div class="flex items-center space-x-1.5 truncate">
+          <span class="relative flex h-2 w-2 shrink-0">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <div class="flex flex-col text-left truncate">
+            <span class="text-[9.5px] font-bold tracking-wide text-white flex items-center gap-1 truncate">
+              BMSIT <i data-lucide="arrow-right" class="w-2.5 h-2.5 text-aura-magenta shrink-0"></i> E-City
+            </span>
+            <span id="header-eta" class="text-[8.5px] text-pink-300 truncate">Via Hosur Rd • 31km</span>
+          </div>
+        </div>
+        <div class="flex items-center text-[9.5px] font-mono text-emerald-400/90 pl-1 border-l border-white/10 shrink-0">
+          <i data-lucide="shield-check" class="w-3 h-3 text-emerald-400 mr-0.5"></i>Safe
+        </div>
+      </div>
+
+      <!-- TOP RIGHT CONTROLS: THREE-LINE MORE MENU + CIRCULAR HIGH-PRIORITY SOS BUTTON -->
+      <div class="relative flex items-center gap-1 shrink-0">
+        <!-- Three-Line Menu Button (Stores Minimized Google Maps Tab) -->
+        <button id="more-menu-btn" onclick="toggleMoreMenu()" 
+          class="flex items-center justify-center w-10 h-10 rounded-full glass-panel border border-white/15 hover:border-pink-400/50 text-slate-200 hover:text-white shadow-lg transition active:scale-95"
+          title="Map Layers & Options">
+          <i data-lucide="menu" class="w-4.5 h-4.5"></i>
+        </button>
+
+        <!-- CIRCULAR HIGH-PRIORITY SOS EMERGENCY BUTTON -->
+        <button id="sos-main-btn" onclick="startSOSFlow()" 
+          class="relative flex flex-col items-center justify-center w-13 h-13 rounded-full bg-gradient-to-tr from-rose-700 via-rose-600 to-aura-magenta text-white font-black shadow-xl animate-glow-sos transition-all duration-300 hover:scale-110 active:scale-95 border-2 border-rose-300/60 shrink-0">
+          <span class="text-xs tracking-wider leading-none">SOS</span>
+          <span class="text-[7.5px] font-medium opacity-90 leading-none mt-0.5 tracking-tighter">112 BLR</span>
+        </button>
+
+        <!-- Minimized Google Maps Layer Dropdown Menu -->
+        <div id="more-options-dropdown" class="hidden absolute right-0 top-14 w-44 glass-panel p-2 rounded-2xl border border-white/20 shadow-2xl z-50">
+          <div class="flex items-center justify-between px-1 pb-1.5 mb-1.5 border-b border-white/10">
+            <div class="flex items-center gap-1">
+              <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+              <span class="text-[9.5px] font-bold tracking-wider text-slate-200 uppercase">Google Maps</span>
+            </div>
+            <span class="text-[8px] text-emerald-400 font-mono">LIVE</span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <button id="layer-btn-road" onclick="switchGoogleMapLayer('road'); toggleMoreMenu();" 
+              class="w-full px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold text-left transition bg-aura-magenta text-white shadow flex items-center justify-between">
+              <span>Standard Map</span>
+              <span class="text-[8.5px] opacity-80">Default</span>
+            </button>
+            <button id="layer-btn-night" onclick="switchGoogleMapLayer('night'); toggleMoreMenu();" 
+              class="w-full px-2.5 py-1.5 rounded-xl text-[10.5px] font-semibold text-left transition text-slate-300 hover:text-white hover:bg-white/10 flex items-center justify-between">
+              <span>Night Mode</span>
+              <span class="text-[8.5px] opacity-60">Dark</span>
+            </button>
+            <button id="layer-btn-sat" onclick="switchGoogleMapLayer('satellite'); toggleMoreMenu();" 
+              class="w-full px-2.5 py-1.5 rounded-xl text-[10.5px] font-semibold text-left transition text-slate-300 hover:text-white hover:bg-white/10 flex items-center justify-between">
+              <span>Satellite</span>
+              <span class="text-[8.5px] opacity-60">Hybrid</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- RADAR / POLICE & ELEVATED EXPRESSWAY MONITOR -->
+    <div class="relative z-10 px-3 mt-0.5 space-y-1.5">
+      <!-- Live Street Progress & Simulation Control Pill -->
+      <div class="flex items-center justify-between text-[10.5px] glass-panel px-3 py-1 rounded-full border border-pink-500/30 shadow">
+        <div class="flex items-center gap-1.5 truncate">
+          <i data-lucide="navigation" class="w-3.5 h-3.5 text-aura-magenta shrink-0"></i>
+          <span id="current-street-name" class="font-semibold text-white truncate">Doddaballapur Main Rd</span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0 ml-1.5">
+          <button onclick="centerMapOnUser()" class="p-1.5 rounded-full bg-slate-800/90 hover:bg-slate-700 text-pink-300 transition" title="Center on Vehicle">
+            <i data-lucide="locate-fixed" class="w-3.5 h-3.5"></i>
+          </button>
+          <button onclick="toggleTransitSimulation()" class="p-1.5 rounded-full bg-slate-800/90 hover:bg-slate-700 transition" title="Pause/Resume Transit">
+            <i id="sim-icon" data-lucide="pause" class="w-3.5 h-3.5 text-emerald-400"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-[10.5px] text-pink-200/90 bg-violet-950/65 border border-violet-500/30 px-3 py-1 rounded-full backdrop-blur-md shadow">
+        <div class="flex items-center gap-1.5 truncate">
+          <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+          <span id="radar-status-text" class="truncate">Nearest Police Station in Circle</span>
+        </div>
+        <span id="vehicle-speed" class="text-[10px] text-emerald-400 font-mono font-bold shrink-0 ml-1">42 km/h</span>
+      </div>
+
+      <!-- Map Legend: Safety Circle, Nearest Police & Trusted Houses -->
+      <div class="flex items-center justify-between px-2.5 py-0.5 rounded-full glass-panel border border-white/10 text-[8.5px] text-slate-300 shadow">
+        <div class="flex items-center gap-1">
+          <span class="w-2 h-2 rounded-full bg-sky-400 shadow-[0_0_6px_#38bdf8]"></span>
+          <span>Police in Circle</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_#f59e0b]"></span>
+          <span>Friend Home</span>
+        </div>
+        <div class="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/40 font-bold">
+          3 KM RADAR
+        </div>
+      </div>
+    </div>
+
+    <!-- MIDDLE LEFT & RIGHT: FLOATING LIVE HEARTBEAT MONITOR (LEFT) & CO-TRAVEL FRIEND MATCHER (RIGHT) -->
+    <div class="relative z-20 flex-1 flex items-center justify-between pointer-events-none px-2.5">
+      
+      <!-- LEFT: Heartbeat Trigger & Expandable Biometric Chart -->
+      <div class="relative flex items-center pointer-events-auto">
+        <!-- Circular Floating Heartbeat Trigger on Middle-Left (Made Bigger) -->
+        <button id="hb-trigger-btn" onclick="toggleHeartbeatMonitor()" 
+          class="group relative flex flex-col items-center justify-center w-16 h-16 rounded-full glass-panel border border-pink-500/40 hover:border-pink-400 shadow-2xl transition-all duration-300 hover:scale-105 active:scale-95">
+          <span id="hb-ping-ring" class="animate-ping absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 opacity-75"></span>
+          <div class="w-7 h-7 rounded-full bg-rose-500/20 border border-rose-400/40 flex items-center justify-center text-rose-400 group-hover:scale-110 transition">
+            <i data-lucide="heart-pulse" class="w-4.5 h-4.5 animate-pulse"></i>
+          </div>
+          <span id="hb-mini-bpm" class="text-xs font-black font-mono text-white leading-none mt-1">84</span>
+        </button>
+
+        <!-- Expandable Live Heartbeat Chart & Biometric Panel - Width aligned to 300px -->
+        <div id="heartbeat-panel" class="hidden absolute left-14 top-1/2 -translate-y-1/2 w-[300px] glass-panel rounded-3xl p-3 border border-pink-500/40 shadow-2xl text-slate-100 z-30">
+          <!-- Panel Header -->
+          <div class="flex items-center justify-between pb-1.5 border-b border-white/10">
+            <div class="flex items-center gap-1.5">
+              <div class="w-7.5 h-7.5 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+                <i data-lucide="activity" class="w-3.5 h-3.5"></i>
+              </div>
+              <div>
+                <h4 class="text-[11.5px] font-bold text-white leading-tight flex items-center gap-1">
+                  Live Biometric Pulse
+                  <span class="px-1.5 py-0.2 text-[7.5px] font-mono bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-400/30">SYNC</span>
+                </h4>
+                <p class="text-[8.5px] text-slate-400">Micro:bit pulse sensor stream</p>
+              </div>
+            </div>
+            <button onclick="toggleHeartbeatMonitor()" class="p-1.5 rounded-full bg-slate-800/90 text-slate-300 hover:text-white">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <!-- Current BPM & Stress State Readout -->
+          <div class="grid grid-cols-3 gap-1.5 my-2">
+            <div class="bg-slate-900/80 border border-white/10 rounded-xl p-1.5 text-center">
+              <span class="text-[8.5px] text-slate-400 block">Current BPM</span>
+              <span id="hb-current-val" class="text-base font-black font-mono text-white">84</span>
+            </div>
+            <div class="bg-slate-900/80 border border-white/10 rounded-xl p-1.5 text-center">
+              <span class="text-[8.5px] text-slate-400 block">State Zone</span>
+              <span id="hb-zone-badge" class="inline-block mt-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-400/40">CALM</span>
+            </div>
+            <div class="bg-slate-900/80 border border-white/10 rounded-xl p-1.5 text-center">
+              <span class="text-[8.5px] text-slate-400 block">HRV / SpO2</span>
+              <span id="hb-spo2-val" class="text-[10px] font-bold font-mono text-cyan-300 mt-0.5 block">98% • Normal</span>
+            </div>
+          </div>
+
+          <!-- Live Plotted Chart with Y-Axis Marked as Calm (<100), Anxious (<=120), HELP (>120) -->
+          <div class="relative bg-slate-950/90 rounded-2xl border border-white/10 p-1.5">
+            <div class="flex items-center justify-between text-[8.5px] text-slate-400 mb-0.5 px-1">
+              <span>Y-Axis: Thresholds</span>
+              <span class="font-mono text-pink-300">Live ECG</span>
+            </div>
+            <canvas id="heartbeat-canvas" width="270" height="120" class="w-full h-[120px] rounded-xl block"></canvas>
+          </div>
+
+          <!-- Interactive Simulation Presets to Test Calm / Anxious / Help Zones -->
+          <div class="mt-2 pt-2 border-t border-white/10 flex items-center justify-between gap-1">
+            <span class="text-[8.5px] text-slate-400 shrink-0">Sim:</span>
+            <button onclick="setHeartbeatSimMode('calm')" id="hb-mode-calm"
+              class="flex-1 py-1 px-1.5 rounded-full text-[9px] font-bold bg-emerald-500/25 text-emerald-300 border border-emerald-400/50 transition">
+              Calm (&lt;100)
+            </button>
+            <button onclick="setHeartbeatSimMode('anxious')" id="hb-mode-anxious"
+              class="flex-1 py-1 px-1.5 rounded-full text-[9px] font-semibold bg-slate-800 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition">
+              Anx (≤120)
+            </button>
+            <button onclick="setHeartbeatSimMode('help')" id="hb-mode-help"
+              class="flex-1 py-1 px-1.5 rounded-full text-[9px] font-semibold bg-slate-800 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20 transition">
+              HELP (&gt;120)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT (OPPOSITE TO HEARTBEAT MONITOR): CO-TRAVEL FRIEND / ROUTE COMPANION BUTTON & 3-TAB PANEL -->
+      <div class="relative flex items-center pointer-events-auto">
+        <!-- Expandable 3-Tab Co-Travel Companion Panel - Mobile Optimized Width & Positioning -->
+        <div id="cotravel-panel" class="hidden absolute right-14 top-1/2 -translate-y-1/2 w-[275px] sm:w-[300px] glass-panel rounded-3xl p-3 border border-violet-500/40 shadow-2xl text-slate-100 z-30">
+          <!-- Panel Header -->
+          <div class="flex items-center justify-between pb-1.5 border-b border-white/10">
+            <div class="flex items-center gap-1.5">
+              <div class="w-7.5 h-7.5 rounded-full bg-violet-500/20 border border-violet-400/40 flex items-center justify-center text-violet-300">
+                <i data-lucide="users" class="w-3.5 h-3.5"></i>
+              </div>
+              <div>
+                <h4 class="text-[11.5px] font-bold text-white leading-tight flex items-center gap-1">
+                  Co-Travel Companion
+                  <span class="px-1.5 py-0.2 text-[7.5px] font-mono bg-violet-500/20 text-violet-300 rounded-full border border-violet-400/30">VERIFIED</span>
+                </h4>
+                <p class="text-[8.5px] text-slate-400">Travel together along same route</p>
+              </div>
+            </div>
+            <button onclick="toggleCoTravelPanel()" class="p-1.5 rounded-full bg-slate-800/90 text-slate-300 hover:text-white">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <!-- 3 Tabs Navigation: [Same Route] | [Add] | [Friend] -->
+          <div class="grid grid-cols-3 gap-1 bg-slate-900/90 p-1 rounded-full my-2 border border-white/10">
+            <button id="cotravel-tab-btn-nearby" onclick="switchCoTravelTab('nearby')"
+              class="py-1 px-1.5 rounded-full text-[9.5px] font-bold bg-aura-magenta text-white shadow transition flex items-center justify-center gap-1">
+              <i data-lucide="navigation-2" class="w-3 h-3"></i> Route
+            </button>
+            <button id="cotravel-tab-btn-add" onclick="switchCoTravelTab('add')"
+              class="py-1 px-1.5 rounded-full text-[9.5px] font-semibold text-slate-300 hover:text-white transition flex items-center justify-center gap-1">
+              <i data-lucide="user-plus" class="w-3 h-3"></i> Add
+            </button>
+            <button id="cotravel-tab-btn-friend" onclick="switchCoTravelTab('friend')"
+              class="py-1 px-1.5 rounded-full text-[9.5px] font-semibold text-slate-300 hover:text-white transition flex items-center justify-center gap-1">
+              <i data-lucide="user-check" class="w-3 h-3"></i> Friend
+            </button>
+          </div>
+
+          <!-- TAB 1: SAME ROUTE / NEARBY CO-TRAVELLERS -->
+          <div id="cotravel-tab-nearby" class="space-y-2 max-h-[210px] overflow-y-auto no-scrollbar">
+            <div class="flex items-center justify-between text-[8.5px] text-pink-300 px-1">
+              <span>Women towards Electronic City now</span>
+              <span class="font-mono text-emerald-400">3 Match</span>
+            </div>
+
+            <!-- Traveler 1 -->
+            <div class="p-2 rounded-2xl bg-slate-900/85 border border-violet-500/30 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 truncate">
+                <div class="relative shrink-0">
+                  <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-pink-400" alt="Divya">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                </div>
+                <div class="truncate">
+                  <div class="flex items-center gap-1">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Divya Nair</h5>
+                    <span class="text-[7.5px] px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold">96%</span>
+                  </div>
+                  <p class="text-[8.5px] text-slate-400 truncate">BMSIT ➔ E-City • 250m ahead</p>
+                </div>
+              </div>
+              <button onclick="pairWithTraveler('Divya Nair', 13.0380, 77.5970)" 
+                class="px-2.5 py-1 rounded-full bg-aura-magenta hover:bg-pink-600 text-white text-[9px] font-bold shrink-0 shadow transition active:scale-95">
+                Sync
+              </button>
+            </div>
+
+            <!-- Traveler 2 -->
+            <div class="p-2 rounded-2xl bg-slate-900/85 border border-white/10 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 truncate">
+                <div class="relative shrink-0">
+                  <img src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-violet-400" alt="Meera">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                </div>
+                <div class="truncate">
+                  <div class="flex items-center gap-1">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Meera Kulkarni</h5>
+                    <span class="text-[7.5px] px-1 py-0.2 rounded-full bg-violet-500/20 text-violet-300 font-semibold">88%</span>
+                  </div>
+                  <p class="text-[8.5px] text-slate-400 truncate">Hebbal ➔ Silk Board • 600m</p>
+                </div>
+              </div>
+              <button onclick="pairWithTraveler('Meera Kulkarni', 13.0095, 77.5875)" 
+                class="px-2.5 py-1 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-[9px] font-bold shrink-0 shadow transition active:scale-95">
+                Sync
+              </button>
+            </div>
+
+            <!-- Traveler 3 -->
+            <div class="p-2 rounded-2xl bg-slate-900/85 border border-white/10 flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 truncate">
+                <div class="relative shrink-0">
+                  <img src="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-sky-400" alt="Riya">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                </div>
+                <div class="truncate">
+                  <div class="flex items-center gap-1">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Riya Sharma</h5>
+                    <span class="text-[7.5px] px-1 py-0.2 rounded-full bg-sky-500/20 text-sky-300 font-semibold">92%</span>
+                  </div>
+                  <p class="text-[8.5px] text-slate-400 truncate">Yelahanka ➔ Infosys • 400m</p>
+                </div>
+              </div>
+              <button onclick="pairWithTraveler('Riya Sharma', 12.9295, 77.6225)" 
+                class="px-2.5 py-1 rounded-full bg-violet-600 hover:bg-violet-500 text-white text-[9px] font-bold shrink-0 shadow transition active:scale-95">
+                Sync
+              </button>
+            </div>
+          </div>
+
+          <!-- TAB 2: ADD NEW CO-TRAVEL FRIEND / INVITE BY ROUTE CODE -->
+          <div id="cotravel-tab-add" class="hidden space-y-2">
+            <div class="bg-slate-900/85 border border-white/10 rounded-2xl p-2">
+              <label class="text-[9px] font-semibold text-pink-300 block mb-1">Add by Phone / Safety ID</label>
+              <div class="flex gap-1">
+                <input id="add-friend-input" type="text" placeholder="Name or +91 number..." 
+                  class="flex-1 bg-slate-950/90 border border-white/15 rounded-full px-2.5 py-1 text-[10px] text-white placeholder-slate-500 focus:outline-none focus:border-aura-magenta">
+                <button onclick="sendCoTravelInvite()" 
+                  class="px-3 py-1 rounded-full bg-aura-magenta hover:bg-pink-600 text-white text-[9.5px] font-bold shrink-0 transition active:scale-95">
+                  Add
+                </button>
+              </div>
+            </div>
+
+            <div class="bg-violet-950/50 border border-violet-500/30 rounded-2xl p-2 flex items-center justify-between">
+              <div>
+                <span class="text-[8.5px] text-violet-300 uppercase font-bold block">Route Pairing Code</span>
+                <span class="text-xs font-mono font-black text-white tracking-wider">BLR-884-EC</span>
+                <p class="text-[8px] text-slate-400">Share with cab/bus companion</p>
+              </div>
+              <button onclick="copyPairingCode()" class="px-2.5 py-1 rounded-full bg-violet-600/40 hover:bg-violet-600/60 border border-violet-400/50 text-violet-200 text-[9.5px] font-bold flex items-center gap-1">
+                <i data-lucide="copy" class="w-3 h-3"></i> Copy
+              </button>
+            </div>
+          </div>
+
+          <!-- TAB 3: FRIEND LIST (TRUSTED CIRCLE TRAVELLING OR ONLINE) -->
+          <div id="cotravel-tab-friend" class="hidden space-y-2 max-h-[210px] overflow-y-auto no-scrollbar">
+            <div class="flex items-center justify-between text-[8.5px] text-emerald-300 px-1">
+              <span>Verified Co-Travel Friends</span>
+              <span id="friend-count-badge" class="font-mono">3 Active</span>
+            </div>
+
+            <div id="cotravel-friends-list" class="space-y-1.5">
+              <!-- Friend 1 -->
+              <div class="p-2 rounded-2xl bg-slate-900/85 border border-emerald-500/30 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 truncate">
+                  <div class="relative shrink-0">
+                    <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-emerald-400" alt="Sneha">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                  </div>
+                  <div class="truncate">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Sneha Rao</h5>
+                    <p class="text-[8.5px] text-emerald-400 truncate">NH-44 • Live Linked</p>
+                  </div>
+                </div>
+                <button onclick="pingCoTravelFriend('Sneha Rao')" 
+                  class="px-2.5 py-1 rounded-full bg-emerald-600/30 border border-emerald-400/50 text-emerald-200 text-[9px] font-bold shrink-0">
+                  Link
+                </button>
+              </div>
+
+              <!-- Friend 2 -->
+              <div class="p-2 rounded-2xl bg-slate-900/85 border border-white/10 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 truncate">
+                  <div class="relative shrink-0">
+                    <img src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-amber-400" alt="Ananya">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                  </div>
+                  <div class="truncate">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Ananya Verma</h5>
+                    <p class="text-[8.5px] text-amber-300 truncate">Koramangala • Watching</p>
+                  </div>
+                </div>
+                <button onclick="pingCoTravelFriend('Ananya Verma')" 
+                  class="px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 text-pink-200 text-[9px] font-semibold shrink-0">
+                  Ping
+                </button>
+              </div>
+
+              <!-- Friend 3 -->
+              <div class="p-2 rounded-2xl bg-slate-900/85 border border-white/10 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 truncate">
+                  <div class="relative shrink-0">
+                    <img src="https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=100&h=100&fit=crop&crop=face" class="w-8 h-8 rounded-full object-cover border border-pink-400" alt="Kavya">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 border border-slate-950 absolute -bottom-0.5 -right-0.5"></span>
+                  </div>
+                  <div class="truncate">
+                    <h5 class="text-[10.5px] font-bold text-white truncate">Kavya Menon</h5>
+                    <p class="text-[8.5px] text-slate-400 truncate">E-City Ph 1 • Standby</p>
+                  </div>
+                </div>
+                <button onclick="pingCoTravelFriend('Kavya Menon')" 
+                  class="px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 border border-white/15 text-pink-200 text-[9px] font-semibold shrink-0">
+                  Ping
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Friend / Co-Travel Trigger Button on Middle-Right (Opposite Heartbeat Monitor - Made Bigger) -->
+        <button id="cotravel-trigger-btn" onclick="toggleCoTravelPanel()" 
+          class="group relative flex flex-col items-center justify-center w-16 h-16 rounded-full glass-panel border border-violet-500/40 hover:border-violet-400 shadow-2xl transition-all duration-300 hover:scale-105 active:scale-95">
+          <span class="animate-ping absolute top-1 left-1 w-2.5 h-2.5 rounded-full bg-violet-400 opacity-75"></span>
+          <div class="w-7 h-7 rounded-full bg-violet-500/20 border border-violet-400/40 flex items-center justify-center text-violet-300 group-hover:scale-110 transition">
+            <i data-lucide="users" class="w-4.5 h-4.5"></i>
+          </div>
+          <span id="cotravel-mini-count" class="text-xs font-black font-mono text-white leading-none mt-1">3 Near</span>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- 3. BOTTOM EMERGENCY & ACTION DOCK -->
+    <div class="relative z-20 px-2.5 pb-2.5">
+      
+      <!-- Quick Action Buttons Bar -->
+      <div class="grid grid-cols-2 gap-1.5 mb-1.5">
+        
+        <!-- Safe Havens -->
+        <button onclick="toggleSafeHavensSheet()" 
+          class="flex items-center justify-center gap-1.5 p-2 rounded-full glass-panel border border-violet-500/20 hover:border-violet-400/60 active:scale-95 transition group">
+          <div class="w-7 h-7 rounded-full bg-violet-500/20 flex items-center justify-center text-violet-400 group-hover:scale-110 transition">
+            <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+          </div>
+          <span class="text-[10.5px] font-semibold text-slate-200">Safe Havens</span>
+        </button>
+
+        <!-- Share Live Journey -->
+        <button onclick="shareTripWithGuardians()" 
+          class="flex items-center justify-center gap-1.5 p-2 rounded-full glass-panel border border-emerald-500/20 hover:border-emerald-400/60 active:scale-95 transition group">
+          <div class="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition">
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+          </div>
+          <span class="text-[10.5px] font-semibold text-slate-200">Share Route</span>
+        </button>
+      </div>
+
+      <!-- MAIN BOTTOM SHEET: Journey Telemetry Card -->
+      <div class="glass-panel p-3 rounded-3xl border border-white/10 shadow-2xl relative overflow-hidden">
+        <div class="absolute -top-10 -right-10 w-24 h-24 bg-aura-magenta/15 rounded-full blur-2xl pointer-events-none"></div>
+
+        <div class="flex items-center justify-between pb-1.5 border-b border-white/10">
+          <div class="flex items-center space-x-2">
+            <div class="w-8.5 h-8.5 rounded-full bg-gradient-to-tr from-pink-600 via-aura-magenta to-violet-600 flex items-center justify-center shadow">
+              <i data-lucide="map-pin" class="w-4 h-4 text-white"></i>
+            </div>
+            <div>
+              <h3 class="text-[11px] font-bold text-white tracking-wide">Dest: Electronic City Ph 1</h3>
+              <p class="text-[9.5px] text-slate-400">ETA: <span id="card-eta-val" class="text-pink-300 font-semibold">11:15 PM</span> • <span id="card-dist-val" class="text-emerald-400 font-mono">31.4 km</span> left</p>
+            </div>
+          </div>
+          <button onclick="openCheckInModal()" class="px-2.5 py-1 text-[10px] font-semibold rounded-full bg-pink-500/20 border border-pink-400/40 text-pink-300 hover:bg-pink-500/30 transition">
+            Check-In ✓
+          </button>
+        </div>
+
+        <!-- Real-Time Mic Status -->
+        <div class="pt-1.5 flex items-center justify-between text-[10.5px]">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-slate-400 text-[9.5px]">Aegis Secure Active</span>
+          </div>
+
+          <button onclick="toggleAudioRecorder()" id="audio-rec-btn" class="flex items-center space-x-1 text-slate-300 hover:text-pink-300 text-[9.5px] transition">
+            <i data-lucide="mic" id="audio-rec-icon" class="w-3.5 h-3.5 text-pink-400"></i>
+            <span id="audio-rec-text">Ambient Mic: Active</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODALS & OVERLAYS -->
+  <!-- SOS Modal -->
+  <div id="sos-modal" class="hidden absolute inset-0 z-50 bg-rose-950/90 backdrop-blur-md flex flex-col justify-center items-center p-6 text-center">
+    <div class="w-20 h-20 rounded-full bg-rose-600/30 border-2 border-rose-500 flex items-center justify-center mb-4 animate-bounce">
+      <i data-lucide="alert-octagon" class="w-10 h-10 text-rose-400"></i>
+    </div>
+    <h2 class="text-xl font-black text-white tracking-wider mb-1">DISPATCHING SOS TO 112</h2>
+    <p class="text-xs text-rose-200 mb-6">Broadcasting live BMSIT&M ➔ E-City route telemetry to police dispatch in</p>
+    <div class="w-20 h-20 rounded-full bg-rose-600/40 border border-rose-400 flex items-center justify-center text-3xl font-black text-white mb-6 shadow-2xl">
+      <span id="sos-countdown-num">5</span>
+    </div>
+    <div class="flex gap-3 w-full max-w-xs">
+      <button onclick="cancelSOSFlow()" class="flex-1 py-3 rounded-full bg-slate-800 text-xs font-bold text-slate-200 border border-white/10 active:scale-95 transition">
+        Cancel (False Alarm)
+      </button>
+      <button onclick="dispatchImmediateSOS()" class="flex-1 py-3 rounded-full bg-rose-600 text-xs font-bold text-white shadow-lg active:scale-95 transition">
+        Send Now
+      </button>
+    </div>
+  </div>
+
+  <!-- Camera HUD Overlay -->
+  <div id="camera-hud" class="hidden absolute inset-x-3 top-16 z-30 glass-panel p-3 rounded-2xl border border-rose-500/50 shadow-2xl">
+    <div class="flex items-center justify-between mb-2">
+      <div class="flex items-center gap-1.5">
+        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+        <span class="text-[10px] font-bold text-white tracking-wider uppercase">Encrypted Bodycam Active</span>
+      </div>
+      <div class="flex items-center gap-1">
+        <button onclick="switchCameraLens()" class="px-2 py-0.5 rounded-lg bg-slate-800 text-[9px] text-slate-300">Lens</button>
+        <button onclick="toggleCameraRecord()" class="p-1 rounded-full bg-slate-800 text-slate-300 hover:text-white">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+    <div class="relative w-full h-36 rounded-xl bg-slate-950 overflow-hidden border border-white/10 flex items-center justify-center">
+      <video id="webcam-element" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover opacity-85"></video>
+      <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30 pointer-events-none"></div>
+      <div class="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[8.5px] font-mono text-pink-200">
+        <span id="cam-gps-telemetry">GPS: 13.1331° N, 77.5685° E</span>
+        <span class="text-rose-400 font-bold">REC ● 1080P</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safe Havens Modal / Sheet -->
+  <div id="safe-havens-modal" class="hidden absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col justify-end">
+    <div class="w-full max-h-[80vh] glass-panel rounded-t-[32px] p-4 border-t border-violet-500/40 text-slate-100 shadow-2xl flex flex-col">
+      <div class="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center text-violet-300">
+            <i data-lucide="shield" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-xs font-bold text-white">Verified 24/7 Safe Havens</h3>
+            <p class="text-[9px] text-slate-400">Along BMSIT&M to Electronic City Route</p>
+          </div>
+        </div>
+        <button onclick="toggleSafeHavensSheet()" class="p-1.5 rounded-full bg-slate-800 text-slate-300 hover:text-white">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="space-y-2 overflow-y-auto no-scrollbar flex-1 pr-1">
+        <!-- Haven 1 -->
+        <div onclick="divertToHaven(13.1007, 77.5963, 'Yelahanka Traffic Police Stn')" class="p-3 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-violet-400/50 cursor-pointer transition flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
+              <i data-lucide="shield-alert" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">Yelahanka Police Station</h4>
+              <p class="text-[9px] text-slate-400">Bellary Road • 24/7 Patrol Desk</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-2 py-1 rounded-full bg-sky-500/20 text-sky-300 font-bold">Detour 0.4km</span>
+        </div>
+
+        <!-- Haven 2 -->
+        <div onclick="divertToHaven(13.0354, 77.5988, 'Hebbal 24/7 MedPlus Pharmacy')" class="p-3 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-violet-400/50 cursor-pointer transition flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">Hebbal 24/7 MedPlus</h4>
+              <p class="text-[9px] text-slate-400">Hebbal Junction • CCTV Monitored</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">Open Now</span>
+        </div>
+
+        <!-- Haven 3 -->
+        <div onclick="divertToHaven(12.9756, 77.6066, 'MG Road Pink Hoysala Booth')" class="p-3 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-violet-400/50 cursor-pointer transition flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full bg-aura-magenta/20 text-aura-magenta flex items-center justify-center shrink-0">
+              <i data-lucide="shield" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">MG Road Pink Hoysala Booth</h4>
+              <p class="text-[9px] text-slate-400">Central Brigade Rd Junction</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-2 py-1 rounded-full bg-pink-500/20 text-pink-300 font-bold">Women Assist</span>
+        </div>
+
+        <!-- Haven 4 -->
+        <div onclick="divertToHaven(12.9288, 77.6212, 'St Johns Emergency Trauma Center')" class="p-3 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-violet-400/50 cursor-pointer transition flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center shrink-0">
+              <i data-lucide="heart" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">St. John's Emergency Hospital</h4>
+              <p class="text-[9px] text-slate-400">Madiwala / Koramangala 24/7 ER</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-2 py-1 rounded-full bg-red-500/20 text-red-300 font-bold">Trauma Care</span>
+        </div>
+
+        <!-- Haven 5 -->
+        <div onclick="divertToHaven(12.8399, 77.6770, 'ELCITA Rapid Assist Hub')" class="p-3 rounded-2xl bg-slate-900/90 border border-white/10 hover:border-violet-400/50 cursor-pointer transition flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <i data-lucide="shield-check" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white">ELCITA Safety Hub (E-City)</h4>
+              <p class="text-[9px] text-slate-400">Electronic City Phase 1 Security</p>
+            </div>
+          </div>
+          <span class="text-[9px] px-2 py-1 rounded-full bg-blue-500/20 text-blue-300 font-bold">Destination</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Check-In Modal -->
+  <div id="checkin-modal" class="hidden absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex flex-col justify-center items-center p-6">
+    <div class="w-full max-w-xs glass-panel p-5 rounded-3xl border border-pink-500/40 text-slate-100 shadow-2xl text-center">
+      <div class="w-12 h-12 rounded-full bg-pink-500/20 border border-pink-400 flex items-center justify-center text-pink-300 mx-auto mb-3">
+        <i data-lucide="check-circle" class="w-6 h-6"></i>
+      </div>
+      <h3 class="text-sm font-bold text-white mb-1">Send Safe Check-In</h3>
+      <p id="checkin-location-text" class="text-[10.5px] text-pink-200 mb-4">Crossing Doddaballapur Main Rd safely.</p>
+      <div class="flex gap-2">
+        <button onclick="openCheckInModal(false)" class="flex-1 py-2 rounded-xl bg-slate-800 text-xs font-medium text-slate-300">Cancel</button>
+        <button onclick="completeCheckIn()" class="flex-1 py-2 rounded-xl bg-aura-magenta text-xs font-bold text-white shadow">Send ✓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Message Overlay -->
+  <div id="toast-message" class="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 translate-y-3 transition-all duration-300 max-w-xs w-[90%] text-center">
+    <div class="inline-block px-3.5 py-2 rounded-2xl glass-panel border border-pink-500/40 text-slate-100 text-[11px] font-semibold shadow-2xl backdrop-blur-xl">
+      <span id="toast-text">Notification message</span>
+    </div>
+  </div>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    lucide.createIcons();
+
+    // Map & Location Variables
+    let map;
+    let userMarker;
+    let userRadiusCircle;
+    let nearestPoliceLine;
+    let routePolyline;
+    let googleTileLayers = {};
+    let currentGoogleLayer = null;
+    let isRecording = false;
+    let sosTimerInterval = null;
+    let sosSecondsRemaining = 5;
+    let isSimulationPaused = false;
+    let simInterval = null;
+    let helpRangeTimer = null;
+    let helpRangeSecondsCount = 0;
+
+    // REAL BENGALURU WAYPOINTS: BMSIT&M (Yelahanka - 13.1331, 77.5685) to Electronic City Phase 1 (12.8399, 77.6770)
+    const bmsitToECityWaypoints = [
+      { lat: 13.1331, lng: 77.5685, name: "BMSIT&M Campus Gate (Yelahanka)", street: "Doddaballapur Main Rd", speed: 28 },
+      { lat: 13.1007, lng: 77.5963, name: "Yelahanka Police Station / Bypass", street: "Bellary Road (NH 44)", speed: 48 },
+      { lat: 13.0645, lng: 77.5948, name: "Jakkur Aerodrome Flyover", street: "Bellary Road Expressway", speed: 54 },
+      { lat: 13.0354, lng: 77.5988, name: "Hebbal Flyover Junction", street: "Hebbal Overpass (ORR)", speed: 42 },
+      { lat: 13.0078, lng: 77.5855, name: "Mekhri Circle Underpass", street: "Bellary Road / Palace Rd", speed: 40 },
+      { lat: 12.9756, lng: 77.6066, name: "MG Road / Pink Hoysala Booth", street: "MG Road Commercial Corridor", speed: 32 },
+      { lat: 12.9610, lng: 77.6030, name: "Richmond Circle Flyover", street: "Richmond Road", speed: 36 },
+      { lat: 12.9345, lng: 77.6195, name: "Koramangala Water Tank / Forum", street: "Hosur Main Road", speed: 34 },
+      { lat: 12.9288, lng: 77.6212, name: "St. John's Hospital / Madiwala", street: "Hosur Road (Madiwala)", speed: 35 },
+      { lat: 12.9177, lng: 77.6238, name: "Silk Board Junction Outpost", street: "Silk Board Flyover Ramp", speed: 28 },
+      { lat: 12.8900, lng: 77.6410, name: "Hosur Road Elevated Expway (Kudlu)", street: "ECity Elevated Expressway", speed: 65 },
+      { lat: 12.8635, lng: 77.6580, name: "Hosur Elevated Expressway (Hosa Rd)", street: "Elevated Highway South", speed: 62 },
+      { lat: 12.8452, lng: 77.6601, name: "Electronic City Toll Plaza / Ph 1", street: "E-City Phase 1 Entrance", speed: 35 },
+      { lat: 12.8399, lng: 77.6770, name: "Electronic City Phase 1 Security Hub", street: "Infosys Ave / ELCITA Campus", speed: 20 }
+    ];
+
+    // BENGALURU POLICE STATIONS ALONG CORRIDOR
+    const bengaluruPoliceStations = [
+      { lat: 13.1385, lng: 77.5712, name: "Rajanukunte / BMSIT Outpost Police", phone: "080-28467222", marker: null },
+      { lat: 13.1025, lng: 77.5940, name: "Yelahanka Law & Order Police Station", phone: "080-22942536", marker: null },
+      { lat: 13.0610, lng: 77.5920, name: "Amruthahalli / Jakkur Police Station", phone: "080-22942588", marker: null },
+      { lat: 13.0385, lng: 77.5960, name: "Hebbal Police Station (NH-44)", phone: "080-22942542", marker: null },
+      { lat: 13.0055, lng: 77.5830, name: "Sadashivanagar Police Station", phone: "080-22942591", marker: null },
+      { lat: 12.9765, lng: 77.6040, name: "Cubbon Park / MG Rd Pink Hoysala", phone: "080-22942511", marker: null },
+      { lat: 12.9585, lng: 77.6065, name: "Ashok Nagar Police Station", phone: "080-22942466", marker: null },
+      { lat: 12.9235, lng: 77.6200, name: "Madiwala Traffic & Law Police Stn", phone: "080-22942453", marker: null },
+      { lat: 12.8880, lng: 77.6435, name: "Parappana Agrahara / Kudlu Police", phone: "080-22943481", marker: null },
+      { lat: 12.8430, lng: 77.6635, name: "Electronic City Police Station", phone: "080-22943469", marker: null }
+    ];
+
+    // RELATIVES & FRIENDS SAFE HOUSES ALONG THE ROUTE
+    const relativesAndFriendsHomes = [
+      { lat: 13.1120, lng: 77.5840, name: "Sneha's House (BMSIT Classmate)", relation: "Friend • Yelahanka New Town" },
+      { lat: 13.0420, lng: 77.5930, name: "Mausi Ji's Residence (Aunt)", relation: "Relative • Hebbal Kempapura" },
+      { lat: 12.9840, lng: 77.5960, name: "Rohan Mama's Home (Uncle)", relation: "Relative • Vasanth Nagar" },
+      { lat: 12.9380, lng: 77.6245, name: "Ananya's Apartment (Best Friend)", relation: "Friend • Koramangala 4th Block" },
+      { lat: 12.8510, lng: 77.6690, name: "Priya Didi's Flat (Cousin Sister)", relation: "Relative • Neeladri Rd, E-City" }
+    ];
+
+    const SAFETY_CIRCLE_RADIUS_METERS = 3000;
+    let currentWaypointIdx = 0;
+
+    let hbHistory = [82, 84, 83, 85, 84, 86, 83, 85, 84, 82, 84, 85, 83, 84, 86, 85, 84, 83, 85, 84];
+    let hbSimMode = 'microbit_sensor';
+    let hbInterval = null;
+    let helpAlertCooldown = false;
+
+    window.onload = function () {
+      initBengaluruMap();
+      initHeartbeatMonitor();
+      lucide.createIcons();
+    };
+
+    function initHeartbeatMonitor() {
+      drawHeartbeatChart();
+      
+      hbInterval = setInterval(async () => {
+        let nextBpm = 82;
+        if (hbSimMode === 'microbit_sensor') {
+          try {
+            nextBpm = Math.floor(74 + Math.random() * 22);
+          } catch(e) {
+            nextBpm = 84;
+          }
+        } else if (hbSimMode === 'calm') {
+          nextBpm = Math.floor(72 + Math.random() * 20);
+        } else if (hbSimMode === 'anxious') {
+          nextBpm = Math.floor(102 + Math.random() * 18);
+        } else if (hbSimMode === 'help') {
+          nextBpm = Math.floor(125 + Math.random() * 25);
+        }
+
+        hbHistory.push(nextBpm);
+        if (hbHistory.length > 24) hbHistory.shift();
+
+        updateHeartbeatUI(nextBpm);
+        drawHeartbeatChart();
+      }, 1200);
+    }
+
+    function toggleHeartbeatMonitor() {
+      const panel = document.getElementById('heartbeat-panel');
+      const coPanel = document.getElementById('cotravel-panel');
+      if (!panel) return;
+      if (coPanel && !coPanel.classList.contains('hidden')) {
+        coPanel.classList.add('hidden');
+      }
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) {
+        drawHeartbeatChart();
+      }
+    }
+
+    let pairedCoTravelerMarker = null;
+
+    function toggleCoTravelPanel() {
+      const panel = document.getElementById('cotravel-panel');
+      const hbPanel = document.getElementById('heartbeat-panel');
+      if (!panel) return;
+      if (hbPanel && !hbPanel.classList.contains('hidden')) {
+        hbPanel.classList.add('hidden');
+      }
+      panel.classList.toggle('hidden');
+    }
+
+    function switchCoTravelTab(tabName) {
+      const tabs = ['nearby', 'add', 'friend'];
+      tabs.forEach((t) => {
+        const contentEl = document.getElementById(`cotravel-tab-${t}`);
+        const btnEl = document.getElementById(`cotravel-tab-btn-${t}`);
+        if (contentEl) {
+          if (t === tabName) contentEl.classList.remove('hidden');
+          else contentEl.classList.add('hidden');
+        }
+        if (btnEl) {
+          if (t === tabName) {
+            btnEl.className = "py-1 px-1.5 rounded-full text-[9.5px] font-bold bg-aura-magenta text-white shadow transition flex items-center justify-center gap-1";
+          } else {
+            btnEl.className = "py-1 px-1.5 rounded-full text-[9.5px] font-semibold text-slate-300 hover:text-white transition flex items-center justify-center gap-1";
+          }
+        }
+      });
+    }
+
+    function pairWithTraveler(name, lat, lng) {
+      const miniCount = document.getElementById('cotravel-mini-count');
+      const miniStatus = document.getElementById('cotravel-mini-status');
+      if (miniCount) miniCount.innerText = 'Synced';
+      if (miniStatus) {
+        miniStatus.innerText = name.split(' ')[0];
+        miniStatus.className = 'text-[8px] font-bold uppercase tracking-wider text-emerald-400 leading-none mt-0.5';
+      }
+
+      if (map) {
+        if (pairedCoTravelerMarker) {
+          map.removeLayer(pairedCoTravelerMarker);
+        }
+        const buddyIcon = L.divIcon({
+          className: 'custom-buddy-marker',
+          html: `
+            <div class="px-2 py-1 rounded-full bg-violet-950/95 border-2 border-emerald-400 text-[9px] font-bold text-white shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>👭 Co-Traveller: ${name}</span>
+            </div>
+          `,
+          iconSize: [165, 28],
+          iconAnchor: [82, 14]
+        });
+        pairedCoTravelerMarker = L.marker([lat, lng], { icon: buddyIcon, zIndexOffset: 980 }).addTo(map);
+        map.flyTo([lat, lng], 14, { duration: 1.2 });
+      }
+
+      toggleCoTravelPanel();
+      showToast(`👭 Paired with ${name}! Shared live route.`);
+    }
+
+    function sendCoTravelInvite() {
+      const input = document.getElementById('add-friend-input');
+      const val = input ? input.value.trim() : '';
+      if (!val) {
+        showToast('Enter a friend name or phone number');
+        return;
+      }
+
+      const list = document.getElementById('cotravel-friends-list');
+      if (list) {
+        const item = document.createElement('div');
+        item.className = 'p-2 rounded-2xl bg-slate-900/85 border border-emerald-500/40 flex items-center justify-between gap-2';
+        item.innerHTML = `
+          <div class="flex items-center gap-2 truncate">
+            <div class="w-8 h-8 rounded-full bg-violet-600/30 border border-emerald-400 flex items-center justify-center text-xs font-bold text-white shrink-0">
+              ${val.charAt(0).toUpperCase()}
+            </div>
+            <div class="truncate">
+              <h5 class="text-[10px] font-bold text-white truncate">${val}</h5>
+              <p class="text-[8px] text-emerald-400 truncate">Added • Synced</p>
+            </div>
+          </div>
+          <button onclick="pingCoTravelFriend('${val.replace(/'/g, "\\'")}')" 
+            class="px-2 py-1 rounded-xl bg-emerald-600/30 border border-emerald-400/50 text-emerald-200 text-[9px] font-bold shrink-0">
+            Link
+          </button>
+        `;
+        list.prepend(item);
+      }
+
+      if (input) input.value = '';
+      switchCoTravelTab('friend');
+      showToast(`✅ Added ${val} to Co-Travel Friends!`);
+    }
+
+    function copyPairingCode() {
+      const tempInput = document.createElement('input');
+      tempInput.value = 'BLR-884-EC';
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      showToast('Copied Route Code: BLR-884-EC');
+    }
+
+    function pingCoTravelFriend(friendName) {
+      toggleCoTravelPanel();
+      showToast(`📍 Live telemetry linked with ${friendName}`);
+    }
+
+    function setHeartbeatSimMode(mode) {
+      hbSimMode = mode;
+      const btnCalm = document.getElementById('hb-mode-calm');
+      const btnAnx = document.getElementById('hb-mode-anxious');
+      const btnHelp = document.getElementById('hb-mode-help');
+
+      if (btnCalm) btnCalm.className = mode === 'calm'
+        ? "flex-1 py-1 px-1.5 rounded-full text-[9px] font-bold bg-emerald-500/30 text-emerald-200 border border-emerald-400 transition"
+        : "flex-1 py-1 px-1.5 rounded-full text-[9px] font-semibold bg-slate-800 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition";
+
+      if (btnAnx) btnAnx.className = mode === 'anxious'
+        ? "flex-1 py-1 px-1.5 rounded-full text-[9px] font-bold bg-amber-500/30 text-amber-200 border border-amber-400 transition"
+        : "flex-1 py-1 px-1.5 rounded-full text-[9px] font-semibold bg-slate-800 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition";
+
+      if (btnHelp) btnHelp.className = mode === 'help'
+        ? "flex-1 py-1 px-1.5 rounded-full text-[9px] font-bold bg-rose-600/40 text-rose-100 border border-rose-400 transition"
+        : "flex-1 py-1 px-1.5 rounded-full text-[9px] font-semibold bg-slate-800 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20 transition";
+
+      const immediateSample = mode === 'calm' ? 84 : (mode === 'anxious' ? 112 : 136);
+      hbHistory.push(immediateSample);
+      if (hbHistory.length > 24) hbHistory.shift();
+      updateHeartbeatUI(immediateSample);
+      drawHeartbeatChart();
+    }
+
+    function updateHeartbeatUI(bpm) {
+      const miniBpm = document.getElementById('hb-mini-bpm');
+      const miniStatus = document.getElementById('cotravel-mini-status');
+      const pingRing = document.getElementById('hb-ping-ring');
+      const curVal = document.getElementById('hb-current-val');
+      const zoneBadge = document.getElementById('hb-zone-badge');
+      const spo2Val = document.getElementById('hb-spo2-val');
+
+      if (miniBpm) miniBpm.innerText = bpm;
+      if (curVal) curVal.innerText = bpm;
+
+      if (bpm < 100) {
+        if (pingRing) pingRing.className = 'animate-ping absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 opacity-75';
+        if (zoneBadge) {
+          zoneBadge.innerText = 'CALM';
+          zoneBadge.className = 'inline-block mt-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-400/40';
+        }
+        if (spo2Val) spo2Val.innerText = '98% • Steady';
+        
+        // Reset help range timer if pulse calms down
+        if (helpRangeTimer) {
+          clearInterval(helpRangeTimer);
+          helpRangeTimer = null;
+          helpRangeSecondsCount = 0;
+        }
+      } else if (bpm <= 120) {
+        if (pingRing) pingRing.className = 'animate-ping absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400 opacity-90';
+        if (zoneBadge) {
+          zoneBadge.innerText = 'ANXIOUS';
+          zoneBadge.className = 'inline-block mt-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-amber-500/20 text-amber-300 border border-amber-400/50';
+        }
+        if (spo2Val) spo2Val.innerText = '97% • Elevated';
+
+        // Reset help range timer
+        if (helpRangeTimer) {
+          clearInterval(helpRangeTimer);
+          helpRangeTimer = null;
+          helpRangeSecondsCount = 0;
+        }
+
+        if (!helpAlertCooldown) {
+          helpAlertCooldown = true;
+          triggerHeartbeatSafetyPrompt(bpm, 'Anxious');
+          setTimeout(() => { helpAlertCooldown = false; }, 14000);
+        }
+      } else {
+        if (pingRing) pingRing.className = 'animate-ping absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 opacity-100';
+        if (zoneBadge) {
+          zoneBadge.innerText = 'HELP (>120)';
+          zoneBadge.className = 'inline-block mt-0.5 px-2 py-0.5 rounded-full text-[9.5px] font-black bg-rose-600 text-white border border-rose-300 animate-pulse';
+        }
+        if (spo2Val) spo2Val.innerText = '95% • Distress!';
+
+        // Track duration in HELP range (>120 BPM) for 5 seconds
+        if (!helpRangeTimer) {
+          helpRangeSecondsCount = 0;
+          helpRangeTimer = setInterval(() => {
+            helpRangeSecondsCount++;
+            if (helpRangeSecondsCount >= 5) {
+              clearInterval(helpRangeTimer);
+              helpRangeTimer = null;
+              
+              // Direct SOS dispatch without text messaging
+              dispatchImmediateSOS();
+            }
+          }, 1000);
+        }
+
+        if (!helpAlertCooldown) {
+          helpAlertCooldown = true;
+          showToast(`🚨 High Heart Rate (${bpm} BPM)! Preparing SOS in 3s...`);
+          
+          // Delay the SOS pop-up trigger by exactly 3 seconds
+          setTimeout(() => {
+            startSOSFlowWithReason(`High Pulse Detected (${bpm} BPM)`);
+          }, 3000);
+
+          // Gradually decrease heart rate into calm range over the next 3 seconds instead of jumping instantly
+          setTimeout(() => { setHeartbeatSimMode('anxious'); }, 1500);
+          setTimeout(() => { setHeartbeatSimMode('calm'); }, 3200);
+
+          setTimeout(() => { helpAlertCooldown = false; }, 20000);
+        }
+      }
+    }
+
+    function dispatchEmergencySMSToContact(phoneNumber, bpm) {
+      const emergencyMsg = encodeURIComponent(`EMERGENCY DISTRESS ALERT! User heart rate has been in HELP range (${bpm} BPM) for over 5 seconds. Live Location: BMSIT&M to Electronic City corridor. Please dispatch assistance immediately!`);
+      showToast(`📲 Sending emergency SMS to ${phoneNumber}...`);
+      
+      // Attempt to open SMS intent / trigger dispatcher
+      setTimeout(() => {
+        window.open(`sms:${phoneNumber}?body=${emergencyMsg}`, '_blank');
+      }, 800);
+    }
+
+    function triggerHeartbeatSafetyPrompt(bpm, zone) {
+      const existingPrompt = document.getElementById('hb-safety-drop-banner');
+      if (existingPrompt) existingPrompt.remove();
+
+      const banner = document.createElement('div');
+      banner.id = 'hb-safety-drop-banner';
+      // Width matched to 300px to align breadth with biometric panel
+      banner.className = 'absolute top-1/2 left-[15%] -translate-x-[85%] -translate-y-1/2 z-50 w-[300px] glass-panel rounded-3xl border p-4 shadow-2xl animate-bounce transition-all duration-300 ' + 
+        (zone === 'HELP' ? 'border-rose-500 bg-rose-950/95' : 'border-amber-500 bg-amber-950/95');
+
+      banner.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full ${zone === 'HELP' ? 'bg-rose-500/20 text-rose-400 border-rose-400' : 'bg-amber-500/20 text-amber-300 border-amber-400'} border flex items-center justify-center shrink-0">
+              <i data-lucide="heart-pulse" class="w-4 h-4 animate-pulse"></i>
+            </div>
+            <div>
+              <h4 class="text-xs font-bold text-white flex items-center gap-1">
+                Elevated Pulse (${bpm} BPM)
+                <span class="px-1.5 py-0.2 text-[7px] font-mono rounded-full ${zone === 'HELP' ? 'bg-rose-500 text-white' : 'bg-amber-500 text-slate-950'} font-black uppercase">${zone}</span>
+              </h4>
+              <p class="text-[10px] text-pink-200 mt-0.5">Is everything okay with you?</p>
+            </div>
+          </div>
+          <button onclick="dismissHeartbeatPrompt()" class="text-slate-400 hover:text-white p-1">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <button onclick="handleHeartbeatResponse('yes')" class="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition active:scale-95 flex items-center justify-center gap-1">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Yes, OK
+          </button>
+          <button onclick="handleHeartbeatResponse('no')" class="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow transition active:scale-95 flex items-center justify-center gap-1">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> No (SOS)
+          </button>
+        </div>
+      `;
+
+      // Append directly to the app container so it centers properly over the map and UI
+      const container = document.querySelector('.relative.w-full.h-full');
+      if (container) {
+        container.appendChild(banner);
+      } else {
+        document.body.appendChild(banner);
+      }
+      lucide.createIcons();
+    }
+
+    function dismissHeartbeatPrompt() {
+      const banner = document.getElementById('hb-safety-drop-banner');
+      if (banner) banner.remove();
+    }
+
+    function handleHeartbeatResponse(answer) {
+      dismissHeartbeatPrompt();
+      if (answer === 'yes') {
+        showToast("✅ Confirmed: Everything is okay. Resuming monitoring.");
+        setHeartbeatSimMode('calm');
+      } else {
+        showToast("🚨 Distress confirmed. Initiating SOS & notifying Bengaluru 112.");
+        startSOSFlow();
+      }
+    }
+
+    function drawHeartbeatChart() {
+      const canvas = document.getElementById('heartbeat-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      const padLeft = 48;
+      const padRight = 6;
+      const padTop = 6;
+      const padBottom = 12;
+      const plotW = W - padLeft - padRight;
+      const plotH = H - padTop - padBottom;
+
+      const minBPM = 60;
+      const maxBPM = 160;
+      const bpmToY = (bpm) => {
+        const clamped = Math.max(minBPM, Math.min(maxBPM, bpm));
+        return padTop + plotH - ((clamped - minBPM) / (maxBPM - minBPM)) * plotH;
+      };
+
+      const y120 = bpmToY(120);
+      const y100 = bpmToY(100);
+      const y60 = bpmToY(60);
+
+      ctx.fillStyle = 'rgba(244, 63, 94, 0.16)';
+      ctx.fillRect(padLeft, padTop, plotW, y120 - padTop);
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.14)';
+      ctx.fillRect(padLeft, y120, plotW, y100 - y120);
+
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.13)';
+      ctx.fillRect(padLeft, y100, plotW, y60 - y100);
+
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+
+      ctx.strokeStyle = 'rgba(244, 63, 94, 0.7)';
+      ctx.beginPath();
+      ctx.moveTo(padLeft, y120);
+      ctx.lineTo(W - padRight, y120);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+      ctx.beginPath();
+      ctx.moveTo(padLeft, y100);
+      ctx.lineTo(W - padRight, y100);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.font = 'bold 8.5px sans-serif';
+      ctx.textAlign = 'right';
+
+      ctx.fillStyle = '#fda4af';
+      ctx.fillText('HELP', padLeft - 4, (padTop + y120) / 2 + 2);
+      ctx.font = '7.5px monospace';
+      ctx.fillStyle = '#fb7185';
+      ctx.fillText('>120', padLeft - 4, (padTop + y120) / 2 + 10);
+
+      ctx.font = 'bold 8.5px sans-serif';
+      ctx.fillStyle = '#fde68a';
+      ctx.fillText('Anx', padLeft - 4, (y120 + y100) / 2 + 1);
+      ctx.font = '7.5px monospace';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText('≤120', padLeft - 4, (y120 + y100) / 2 + 9);
+
+      ctx.font = 'bold 8.5px sans-serif';
+      ctx.fillStyle = '#6ee7b7';
+      ctx.fillText('Calm', padLeft - 4, (y100 + y60) / 2);
+      ctx.font = '7.5px monospace';
+      ctx.fillStyle = '#34d399';
+      ctx.fillText('<100', padLeft - 4, (y100 + y60) / 2 + 9);
+
+      if (hbHistory.length < 2) return;
+      const latestBpm = hbHistory[hbHistory.length - 1];
+      const lineColor = latestBpm > 120 ? '#f43f5e' : (latestBpm >= 100 ? '#f59e0b' : '#10b981');
+
+      ctx.save();
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = lineColor;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+
+      hbHistory.forEach((bpm, idx) => {
+        const x = padLeft + (idx / (hbHistory.length - 1)) * plotW;
+        const y = bpmToY(bpm);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function initBengaluruMap() {
+      map = L.map('night-map', {
+        zoomControl: false,
+        attributionControl: false
+      }).setView([13.0150, 77.6050], 12);
+
+      googleTileLayers = {
+        night: L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+          maxZoom: 20,
+          subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+          className: 'google-night-tiles'
+        }),
+        road: L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+          maxZoom: 20,
+          subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        }),
+        satellite: L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+          maxZoom: 20,
+          subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        })
+      };
+
+      currentGoogleLayer = googleTileLayers.road;
+      currentGoogleLayer.addTo(map);
+
+      const latlngs = bmsitToECityWaypoints.map(pt => [pt.lat, pt.lng]);
+
+      L.polyline(latlngs, {
+        color: '#8b5cf6',
+        weight: 12,
+        opacity: 0.35
+      }).addTo(map);
+
+      routePolyline = L.polyline(latlngs, {
+        color: '#ff2a85',
+        weight: 5,
+        opacity: 0.98,
+        className: 'route-glow-polyline'
+      }).addTo(map);
+
+      const startIcon = L.divIcon({
+        className: 'custom-endpoint-marker',
+        html: `
+          <div class="px-2.5 py-1 rounded-xl bg-violet-950/95 border border-violet-400 text-[9.5px] font-bold text-white shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+            <span class="w-2 h-2 rounded-full bg-violet-400 animate-ping"></span>
+            BMSIT&M College (Origin)
+          </div>
+        `,
+        iconSize: [150, 28],
+        iconAnchor: [75, 14]
+      });
+      L.marker([bmsitToECityWaypoints[0].lat, bmsitToECityWaypoints[0].lng], { icon: startIcon }).addTo(map);
+
+      const endPoint = bmsitToECityWaypoints[bmsitToECityWaypoints.length - 1];
+      const endIcon = L.divIcon({
+        className: 'custom-endpoint-marker',
+        html: `
+          <div class="px-2.5 py-1 rounded-xl bg-pink-950/95 border border-aura-magenta text-[9.5px] font-bold text-white shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+            <span class="w-2 h-2 rounded-full bg-pink-400 animate-pulse"></span>
+            Electronic City Ph 1 (Dest)
+          </div>
+        `,
+        iconSize: [155, 28],
+        iconAnchor: [77, 14]
+      });
+      L.marker([endPoint.lat, endPoint.lng], { icon: endIcon }).addTo(map);
+
+      const firstPt = bmsitToECityWaypoints[0];
+
+      userRadiusCircle = L.circle([firstPt.lat, firstPt.lng], {
+        radius: SAFETY_CIRCLE_RADIUS_METERS,
+        color: '#38bdf8',
+        weight: 2.5,
+        fillColor: '#38bdf8',
+        fillOpacity: 0.14,
+        dashArray: '8, 6',
+        className: 'user-safety-circle'
+      }).addTo(map);
+
+      nearestPoliceLine = L.polyline([[firstPt.lat, firstPt.lng], [bengaluruPoliceStations[0].lat, bengaluruPoliceStations[0].lng]], {
+        color: '#38bdf8',
+        weight: 2.5,
+        dashArray: '5, 6',
+        opacity: 0.9
+      }).addTo(map);
+
+      const userIcon = L.divIcon({
+        className: 'relative flex items-center justify-center',
+        html: `
+          <div class="relative flex items-center justify-center">
+            <span class="animate-ping absolute w-8 h-8 rounded-full bg-aura-magenta opacity-75"></span>
+            <div class="w-4.5 h-4.5 rounded-full bg-aura-magenta border-2 border-white shadow-lg flex items-center justify-center">
+              <div class="w-2 h-2 rounded-full bg-white"></div>
+            </div>
+          </div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+
+      userMarker = L.marker([firstPt.lat, firstPt.lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
+
+      bengaluruPoliceStations.forEach((ps) => {
+        ps.marker = L.marker([ps.lat, ps.lng], {
+          icon: createPoliceMarkerIcon(ps.name, false, null),
+          zIndexOffset: 800
+        }).addTo(map);
+
+        ps.marker.on('click', () => {
+          showToast(`🚓 ${ps.name} • Direct: ${ps.phone}`);
+        });
+      });
+
+      relativesAndFriendsHomes.forEach((home) => {
+        const homeIcon = L.divIcon({
+          className: 'custom-home-marker',
+          html: `
+            <div class="px-2 py-1 rounded-xl bg-amber-950/95 border border-amber-400 text-[8.5px] font-bold text-amber-100 shadow-lg flex items-center gap-1 whitespace-nowrap">
+              <span>🏠</span>
+              <div>
+                <div class="leading-none text-amber-200">${home.name}</div>
+                <div class="text-[7.5px] font-normal text-amber-400/90 leading-none mt-0.5">${home.relation}</div>
+              </div>
+            </div>
+          `,
+          iconSize: [155, 28],
+          iconAnchor: [77, 14]
+        });
+
+        const marker = L.marker([home.lat, home.lng], { icon: homeIcon, zIndexOffset: 750 }).addTo(map);
+        marker.on('click', () => {
+          showToast(`🏠 Safe House: ${home.name}`);
+        });
+      });
+
+      updateSafetyCircleAndNearestPolice(firstPt);
+      map.setView([firstPt.lat, firstPt.lng], 13);
+      simInterval = setInterval(simulateBengaluruTransitStep, 3600);
+    }
+
+    function createPoliceMarkerIcon(name, isInsideCircle, distKm) {
+      const highlightClass = isInsideCircle ? 'police-active-highlight border-sky-300 bg-sky-950' : 'border-slate-700 bg-slate-900/90';
+      const badgeText = isInsideCircle && distKm !== null ? `${distKm} km • Nearest` : 'Police';
+      return L.divIcon({
+        className: 'custom-police-marker',
+        html: `
+          <div class="px-2 py-1 rounded-xl border ${highlightClass} text-[8.5px] font-bold text-white shadow-lg flex items-center gap-1.5 whitespace-nowrap transition-all duration-300">
+            <span class="w-1.5 h-1.5 rounded-full ${isInsideCircle ? 'bg-sky-400 animate-ping' : 'bg-slate-400'}"></span>
+            <div>
+              <div class="leading-none text-slate-100">${name}</div>
+              <div class="text-[7px] font-mono ${isInsideCircle ? 'text-sky-300 font-black' : 'text-slate-400'} leading-none mt-0.5">${badgeText}</div>
+            </div>
+          </div>
+        `,
+        iconSize: [135, 26],
+        iconAnchor: [67, 13]
+      });
+    }
+
+    function updateSafetyCircleAndNearestPolice(userPos) {
+      if (!userRadiusCircle) return;
+      userRadiusCircle.setLatLng([userPos.lat, userPos.lng]);
+
+      let nearestPs = null;
+      let minDistanceMeters = Infinity;
+
+      bengaluruPoliceStations.forEach((ps) => {
+        const psLatLng = L.latLng(ps.lat, ps.lng);
+        const userLatLng = L.latLng(userPos.lat, userPos.lng);
+        const distMeters = userLatLng.distanceTo(psLatLng);
+
+        const isInside = distMeters <= SAFETY_CIRCLE_RADIUS_METERS;
+        const distKm = (distMeters / 1000).toFixed(1);
+
+        if (isInside) {
+          ps.marker.setIcon(createPoliceMarkerIcon(ps.name, true, distKm));
+          ps.marker.setZIndexOffset(900);
+        } else {
+          ps.marker.setIcon(createPoliceMarkerIcon(ps.name, false, null));
+          ps.marker.setZIndexOffset(800);
+        }
+
+        if (distMeters < minDistanceMeters) {
+          minDistanceMeters = distMeters;
+          nearestPs = ps;
+        }
+      });
+
+      if (nearestPs) {
+        if (nearestPoliceLine) {
+          nearestPoliceLine.setLatLngs([
+            [userPos.lat, userPos.lng],
+            [nearestPs.lat, nearestPs.lng]
+          ]);
+        }
+        const distKm = (minDistanceMeters / 1000).toFixed(1);
+        const radarStatus = document.getElementById('radar-status-text');
+        if (radarStatus) {
+          radarStatus.innerText = `Nearest: ${nearestPs.name} (${distKm} km)`;
+        }
+      }
+    }
+
+    function switchGoogleMapLayer(layerKey) {
+      if (!map) return;
+      if (currentGoogleLayer) {
+        map.removeLayer(currentGoogleLayer);
+      }
+      currentGoogleLayer = googleTileLayers[layerKey];
+      currentGoogleLayer.addTo(map);
+
+      ['road', 'night', 'satellite'].forEach((k) => {
+        const btn = document.getElementById(`layer-btn-${k}`);
+        if (!btn) return;
+        if (k === layerKey) {
+          btn.className = "w-full px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold text-left transition bg-aura-magenta text-white shadow flex items-center justify-between";
+        } else {
+          btn.className = "w-full px-2.5 py-1.5 rounded-xl text-[10.5px] font-semibold text-left transition text-slate-300 hover:text-white hover:bg-white/10 flex items-center justify-between";
+        }
+      });
+
+      showToast(`Map layer: ${layerKey.toUpperCase()}`);
+    }
+
+    function toggleMoreMenu() {
+      const dropdown = document.getElementById('more-options-dropdown');
+      if (dropdown) dropdown.classList.toggle('hidden');
+    }
+
+    function simulateBengaluruTransitStep() {
+      if (isSimulationPaused) return;
+
+      if (currentWaypointIdx < bmsitToECityWaypoints.length - 1) {
+        currentWaypointIdx++;
+      } else {
+        currentWaypointIdx = 0;
+      }
+
+      const point = bmsitToECityWaypoints[currentWaypointIdx];
+      userMarker.setLatLng([point.lat, point.lng]);
+      updateSafetyCircleAndNearestPolice(point);
+      map.panTo([point.lat, point.lng], { animate: true, duration: 1.4 });
+
+      const streetEl = document.getElementById('current-street-name');
+      if (streetEl) streetEl.innerText = point.street;
+
+      const speedEl = document.getElementById('vehicle-speed');
+      if (speedEl) speedEl.innerText = `${point.speed} km/h`;
+      
+      const remainingKm = Math.max(0, ((bmsitToECityWaypoints.length - 1 - currentWaypointIdx) * 2.4)).toFixed(1);
+      const distEl = document.getElementById('card-dist-val');
+      if (distEl) distEl.innerText = `${remainingKm} km`;
+
+      const etaEl = document.getElementById('header-eta');
+      if (etaEl) etaEl.innerText = `Via Hosur Rd • ${remainingKm}km`;
+      
+      const checkinMsg = `Crossing ${point.name} safely.`;
+      const checkinEl = document.getElementById('checkin-location-text');
+      if (checkinEl) checkinEl.innerText = `Notify family: "${checkinMsg}"`;
+      
+      const gpsEl = document.getElementById('cam-gps-telemetry');
+      if (gpsEl) {
+        gpsEl.innerText = `GPS: ${point.lat.toFixed(4)}° N, ${point.lng.toFixed(4)}° E`;
+      }
+    }
+
+    function toggleTransitSimulation() {
+      isSimulationPaused = !isSimulationPaused;
+      const simIcon = document.getElementById('sim-icon');
+      if (isSimulationPaused) {
+        simIcon.setAttribute('data-lucide', 'play');
+        simIcon.classList.remove('text-emerald-400');
+        simIcon.classList.add('text-amber-400');
+        showToast("Simulation paused");
+      } else {
+        simIcon.setAttribute('data-lucide', 'pause');
+        simIcon.classList.add('text-emerald-400');
+        simIcon.classList.remove('text-amber-400');
+        showToast("Resuming transit stream");
+      }
+      lucide.createIcons();
+    }
+
+    function centerMapOnUser() {
+      const pos = userMarker.getLatLng();
+      map.setView(pos, 15, { animate: true });
+      showToast("Centered on vehicle");
+    }
+
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let recordedAudioChunks = [];
+
+    async function toggleCameraRecord() {
+      const hud = document.getElementById('camera-hud');
+      const recDot = document.getElementById('cam-rec-dot');
+      const recDotFixed = document.getElementById('cam-rec-dot-fixed');
+      const camIcon = document.getElementById('cam-icon');
+
+      isRecording = !isRecording;
+
+      if (isRecording) {
+        hud.classList.remove('hidden');
+        recDot.classList.remove('hidden');
+        recDotFixed.classList.remove('hidden');
+        camIcon.classList.add('text-rose-500');
+        showToast("Video & Audio cloud recording active");
+        startCameraAndAudioStream();
+      } else {
+        hud.classList.add('hidden');
+        recDot.classList.add('hidden');
+        recDotFixed.classList.add('hidden');
+        camIcon.classList.remove('text-rose-500');
+        stopCameraAndAudioStream();
+        showToast("Recording saved to vault");
+      }
+    }
+
+    async function startCameraAndAudioStream() {
+      const videoEl = document.getElementById('webcam-element');
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          // Request both video and audio for SOS recording
+          mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          videoEl.srcObject = mediaStream;
+
+          recordedAudioChunks = [];
+          mediaRecorder = new MediaRecorder(mediaStream);
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              recordedAudioChunks.push(event.data);
+            }
+          };
+          mediaRecorder.start();
+        }
+      } catch (err) {
+        console.log("Webcam / Mic simulated.");
+      }
+    }
+
+    function stopCameraAndAudioStream() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+    }
+
+    function switchCameraLens() {
+      showToast("Lens switched: Ultra-wide Night");
+    }
+
+    function startSOSFlow() {
+      const modal = document.getElementById('sos-modal');
+      const countdownEl = document.getElementById('sos-countdown-num');
+      modal.classList.remove('hidden');
+
+      sosSecondsRemaining = 5;
+      countdownEl.innerText = sosSecondsRemaining;
+
+      // Ensure audio and video recording starts instantly when SOS is initiated
+      if (!isRecording) {
+        toggleCameraRecord();
+      }
+
+      clearInterval(sosTimerInterval);
+      sosTimerInterval = setInterval(() => {
+        sosSecondsRemaining--;
+        if (sosSecondsRemaining > 0) {
+          countdownEl.innerText = sosSecondsRemaining;
+        } else {
+          clearInterval(sosTimerInterval);
+          dispatchImmediateSOS();
+        }
+      }, 1000);
+    }
+
+    function startSOSFlowWithReason(reason) {
+      const modal = document.getElementById('sos-modal');
+      const countdownEl = document.getElementById('sos-countdown-num');
+      
+      const subtitleEl = modal.querySelector('p');
+      if (subtitleEl) {
+        subtitleEl.innerText = `[AUTO-TRIGGER] ${reason} • Broadcasting route telemetry...`;
+      }
+
+      modal.classList.remove('hidden');
+
+      sosSecondsRemaining = 5;
+      countdownEl.innerText = sosSecondsRemaining;
+
+      if (!isRecording) {
+        toggleCameraRecord();
+      }
+
+      clearInterval(sosTimerInterval);
+      sosTimerInterval = setInterval(() => {
+        sosSecondsRemaining--;
+        if (sosSecondsRemaining > 0) {
+          countdownEl.innerText = sosSecondsRemaining;
+        } else {
+          clearInterval(sosTimerInterval);
+          dispatchImmediateSOS();
+        }
+      }, 1000);
+    }
+
+    function cancelSOSFlow() {
+      clearInterval(sosTimerInterval);
+      document.getElementById('sos-modal').classList.add('hidden');
+      showToast("SOS cancelled.");
+    }
+
+    function dispatchImmediateSOS() {
+      clearInterval(sosTimerInterval);
+      document.getElementById('sos-modal').classList.add('hidden');
+      showToast("🚨 ALERT SENT to Bengaluru Police 112");
+
+      if (!isRecording) toggleCameraRecord();
+    }
+
+    function toggleSafeHavensSheet() {
+      const sheet = document.getElementById('safe-havens-modal');
+      sheet.classList.toggle('hidden');
+    }
+
+    function divertToHaven(lat, lng, name) {
+      toggleSafeHavensSheet();
+      map.flyTo([lat, lng], 16, { duration: 1.4 });
+      showToast(`Haven: ${name}`);
+    }
+
+    function shareTripWithGuardians() {
+      if (navigator.share) {
+        navigator.share({
+          title: 'Aegis Live Journey Tracking',
+          text: 'I am travelling along the BMSIT&M to Electronic City corridor. Track my live location securely on Aegis SafeTransit.',
+          url: window.location.href,
+        }).then(() => {
+          showToast("Live location shared successfully!");
+        }).catch(() => {
+          showToast("WhatsApp / Live location link generated");
+        });
+      } else {
+        const tempInput = document.createElement('input');
+        tempInput.value = `Live Safety Route Link: ${window.location.href} (Corridor: BMSIT&M -> E-City)`;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+        showToast("📍 Live location link copied to clipboard!");
+      }
+    }
+
+    function openCheckInModal(show = true) {
+      const modal = document.getElementById('checkin-modal');
+      if (show) modal.classList.remove('hidden');
+      else modal.classList.add('hidden');
+    }
+
+    function completeCheckIn() {
+      openCheckInModal(false);
+      showToast("Status sent: Checked in safely");
+    }
+
+    function toggleAudioRecorder() {
+      const text = document.getElementById('audio-rec-text');
+      const icon = document.getElementById('audio-rec-icon');
+      if (text.innerText.includes("Active")) {
+        text.innerText = "Mic: Paused";
+        icon.classList.remove('text-pink-400');
+        icon.classList.add('text-slate-500');
+        showToast("Audio paused");
+      } else {
+        text.innerText = "Ambient Mic: Active";
+        icon.classList.add('text-pink-400');
+        icon.classList.remove('text-slate-500');
+        showToast("Continuous audio active");
+      }
+    }
+
+    function toggleRouteDetailsModal() {
+      showToast("Route: BMSIT&M ➔ Electronic City");
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast-message');
+      const text = document.getElementById('toast-text');
+      text.innerText = msg;
+      toast.classList.remove('opacity-0', 'translate-y-3');
+      toast.classList.add('opacity-100', 'translate-y-0');
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-3');
+        toast.classList.remove('opacity-100', 'translate-y-0');
+      }, 3400);
+    }
+  </script>
+</body>
+</html>
